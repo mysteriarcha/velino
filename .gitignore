@@ -1,7 +1,9 @@
 .Rproj.user/
 .Rhistory
+*.RData
 *.Rproj
 *.RDS
+*.tif
 data/
 *.dbf
 *.prj
