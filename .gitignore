@@ -1,0 +1,12 @@
+.Rproj.user/
+.Rhistory
+*.Rproj
+*.RDS
+data/
+*.dbf
+*.prj
+*.shp
+*.shx
+
+
+
