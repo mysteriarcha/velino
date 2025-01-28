@@ -29,6 +29,10 @@ speciesrich  %>%
 # We had divided our species richness by grain size, which will come in 
 # handy to run separate analyses. The object in question is sr_split.
 
+
+
+# 1. Pooled data model ----------------------------------------------------
+
 # Let's first fit a general model of the relationship we have seen on the 
 # initial plot: alpha diversity explained by an interaction of plot size
 # and altitude:
@@ -129,34 +133,60 @@ AIC(m, m2, m3, m_int, m_int2, m_int3) %>% .[, 2] %>% phytools::aic.w()
 # Apparently only those of 3rd degree have substantial support. Let's test
 # if the interaction is statistically significant:
 anova(m3, m_int3)
+
 # No, so for prediction purposes we don't need the interaction term 
 # between quota and plot size. However, we saw by the domir function
 # That there is a large share of variation explained by the interaction
 # of the two variables. Hence, let's make a plot of the variance explained
 # by each variable independently and of shared variance.
 
-speciesrich$polyquota1 <- poly(speciesrich$quota, 1)
-speciesrich$polyquota2 <- poly(speciesrich$quota, 2)[,2]
-speciesrich$polyquota3 <- poly(speciesrich$quota, 3)[,3]
 
+# First, however, let's just make a visualization of the model fit 
+# against the data:
+fit_vals_m3 <- data.frame("quota" = speciesrich$quota, 
+                          "fitted" = fitted(m_int3),
+                          "alpha" = speciesrich$alpha,
+                          "size" = as.factor(speciesrich$size2))
+fit_vals_m3 %>% 
+  ggplot(aes(x = quota, y = fitted, color = size)) +
+  geom_point(aes(y = alpha), alpha = .5) +
+  geom_line(linewidth = 1.2) +
+  theme_classic() +
+  scale_color_viridis_d()
+
+# Store the different polynomial terms of quota within speciesrich:
+# speciesrich$polyquota1 <- poly(speciesrich$quota, 1)
+# speciesrich$polyquota2 <- poly(speciesrich$quota, 2)[,2]
+# speciesrich$polyquota3 <- poly(speciesrich$quota, 3)[,3]
+
+# Let's obtain the decomposition of explained variance by each term
+# using dominance analysis. We must use the manual exponentiation
+# instead of the poly() function as in the previous lines because the
+# algorithm doesn't converge:
 r2 <- domir::domir(alpha ~ 
                      I(quota**1) * log(size2) +
                      I(quota**2) * log(size2) +
                      I(quota**3) * log(size2), 
                    NB_glm_r2)
+
+# Let's turn the results it in a suitable dataframe
 r2_df <-
   round(r2$General_Dominance, 2) %>% 
   cbind(., c("Linear", "Log-size", "Quadratic", "Cubic", "interaction1", "interaction2", "interaction3")) %>%
   as.data.frame()
 colnames(r2_df) <- c("var_explained", "predictor")
 r2_df$var_explained <- as.numeric(r2_df$var_explained)
+
+# Aggregate the variance explained by all the interactions of quota and log-size
 r2_df <- rbind(r2_df[1:4, ], 
                data.frame(
                  var_explained = sum(r2_df$var_explained[5:7]), 
                  predictor =  "Interaction")
 )
+# Give the adequate order to the factor (important for visualization)
 r2_df$predictor <- factor(r2_df$predictor, c("Interaction", "Log-size", "Linear", "Quadratic", "Cubic"))
 
+# Visualize:
 ggplot(r2_df,
        aes(x = 1, y = var_explained,
            fill = predictor)) +
@@ -172,18 +202,20 @@ ggplot(r2_df,
   labs(fill = "Predictor variable") +
   scale_fill_viridis_d()
 
-# Let's make a visualization of the model fit:
-fit_vals_m3 <- data.frame("quota" = speciesrich$quota, 
-                          "fitted" = fitted(m3),
-                          "alpha" = speciesrich$alpha,
-                          "size" = as.factor(speciesrich$size2))
-fit_vals_m3 %>% 
-  ggplot(aes(x = quota, y = fitted, color = size)) +
-  geom_point(aes(y = alpha), alpha = .5) +
-  geom_line(linewidth = 1.2) +
-  theme_classic() +
-  scale_color_viridis_d()
+# Now we know how the species diversity reacts as a whole, explainable as:
+summary(m_int3)
 
+# The interaction terms are statistically insignificant, but they point anyway
+# to a negative relationship between plot size and the effect of the linear term,
+# and a positive relationship between plot size and the effect of higher-order
+# terms. Let's explore this in more detail and see whether the relationship is
+# actually linear and how strong
+
+
+# 2. Plot size-divided models ---------------------------------------------
+
+
+# First let's define a function to extract the coefficients
 extract_coefs <- 
   function(mod, var){
     eff <- coef(mod)[[var]]
@@ -194,20 +226,20 @@ extract_coefs <-
     df
   }
 
-sapply(1:5, extract_coefs, mod = m3) %>% 
-  t() %>% 
-  set_rownames(., c("Intercept", "linear_quota", "quad_quota", "cube_quota", "log_size")) %>%
-  as.data.frame() %>% 
-  rownames_to_column(var = "predictor")
-
+# And apply this for our previous model:
 sapply(1:6, extract_coefs, mod = m_int3) %>% 
   t() %>% 
   set_rownames(., c("Intercept", "linear_quota", "quad_quota", "cube_quota", "log_size", "interaction_quota.size")) %>%
   as.data.frame() %>% 
   rownames_to_column(var = "predictor")
 
+# It works, returning us our effect sizes and confidence intervals.
+# Now, if we make individual models for each plot size value, we can extract 
+# this information easily
 
 sizes <- unique(speciesrich$size2)
+
+# Store the summaries of the models:
 summary_lists <- 
   lapply(sizes,
          function(x){
@@ -217,6 +249,7 @@ summary_lists <-
            }
   )
 
+# Extract the effect sizes with our function:
 df_effect_sizes <-
   lapply(sizes,
        function(x){
@@ -233,6 +266,7 @@ df_effect_sizes <-
        }) %>% 
   Reduce(rbind, .)
 
+# Visualize how do the effect sizes for each term change by plot-size:
 df_effect_sizes %>% 
   as_tibble() %>% 
   ggplot(aes(x = log(size,2L), y = eff,
@@ -253,6 +287,10 @@ df_effect_sizes %>%
   ) +
   facet_wrap(~var, scales = "free_y")
 
+# We see what the signs in summary(m_int3) were telling us: there is an increasingly
+# more negative effect of quota on the linear term across plot sizes, and 
+# more positive effects of all the other terms. However, these are, as the
+# summary told us, pretty weak.
 
 d2_AIC_alpha <-   
   map(
