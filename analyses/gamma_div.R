@@ -6,50 +6,6 @@ library(gt)
 library(modEvA)
 
 
-ril_vel <- read.csv("velino_primociclo.csv", row.names = 1) %>% 
-  t() %>% as.data.frame() %>% 
-  add_column(ril = word(rownames(.), 1, sep = '_'), 
-             size = word(rownames(.), 2, sep = '_') ) 
-
-coords <- st_read("coords_rilievi.shp")
-
-vel_env <- read.csv ("velino_env.csv", row.names = 1, sep = ";") %>% 
-  cbind(coords$geometry)
-
-#####gamma diversity
-
-ril_gamma <- vel_env %>% 
-  rownames_to_column("ril") %>% 
-  select(ril, Fascia) %>% 
-  left_join(ril_vel) 
-
-gamma_fascia <- ril_gamma %>% 
-  select(-ril) %>% 
-  group_by(size, Fascia) %>% 
-  summarise(across(.fns =  ~ max(.x,na.rm = T)), .groups = "keep") %>%
-  ungroup() %>% 
-  filter(size != 0.015, size != 0.03125) %>% 
-  mutate(gamma = select(., `Acer campestre`:`Xeranthemum inapertum`) %>% rowSums(na.rm = TRUE)) %>% 
-  select(size,  Fascia, gamma) 
-
-gamma_fascia %>% 
-  mutate(size = as.numeric(size)) %>%
-  arrange(size) %>% 
-  filter(size != 0.015, size != 0.03125) %>% 
-  mutate(size = as.factor(size)) %>% 
-  ggplot(data = ., aes(x = Fascia, y = gamma, col = size, group = size)) +
-  geom_point()+
-  geom_smooth(formula =  y ~ poly(x,2), method = "lm", size = 1.5, alpha = 0.10) +
-  theme_bw()+
-  scale_color_brewer(palette = "Set1") 
-
-
-gam_split <-  gamma_fascia %>% 
-  group_by(size) %>% 
-  group_split() 
-
-
-
 ######## D2 e AIC
 
 

@@ -2,10 +2,10 @@
 
 
 #############################################################################
-# 1. General use dataframes -----------------------------------------------
+### 1. General use dataframes -----------------------------------------------
 
 ## Vegetation data (Plot x Species presence-absence matrix)
-ril_vel <- read.csv("velino_firstcycle.csv", row.names = 1)
+ril_vel <- read.csv("data/velino_firstcycle.csv", row.names = 1)
 ril_vel %<>%
   t() %>%
   as.data.frame() %>% 
@@ -15,6 +15,21 @@ ril_vel %<>%
     size = word(rownames(.), 2, sep = '_')
     )
 
+# We have the following grain sizes:
+grain_sizes  <- as.numeric(sort(unique(ril_vel$size)))
+# As the two finest grain sizes might be problematic when getting diversity
+# metrics (i.e. too small to show any effect), let's create another
+# object without them
+grain_sizes2 <- grain_sizes[grain_sizes > grain_sizes[2]]
+
+spp <- colnames(ril_vel[, 1:(NCOL(ril_vel)-2)])
+
+ril_vel_long <-
+  ril_vel %>% 
+  dplyr::select(-c(ril)) %>%
+  pivot_longer(cols = all_of(spp)) %>% 
+  mutate(size = as.numeric(size))
+
 # Load coordinates for the spatial analyses
 coords <- 
   st_read("coords_rilievi.shp") %>% 
@@ -23,7 +38,7 @@ coords <-
 
 # Load environmental variables and put them into an sf format
 vel_env <- 
-  read.csv ("velino_environment.csv", row.names = 1, sep = ";") %>% 
+  read.csv ("data/velino_environment.csv", row.names = 1, sep = ";") %>% 
   cbind(coords$geometry) %>% 
   sf::st_as_sf()
 
@@ -41,17 +56,26 @@ ril_fascia <-
   dplyr::select(ril, quota) %>% 
   left_join(ril_vel)
 
-
 speciesrich <- 
   ril_fascia %>% 
   dplyr::select(-ril) %>%
-  filter(size != 0.015, size != 0.03125) %>% 
+  filter(size %in% grain_sizes2) %>%
   mutate(alpha = {  
     dplyr::select(., `Acer campestre`:`Xeranthemum inapertum`) %>% 
       rowSums(na.rm = TRUE)
     }
   ) %>% 
   dplyr::select(size, quota, alpha)
+
+speciesrich$size2 <- as.numeric(speciesrich$size)
+
+# We can make a list of alpha diversity by grain size
+sr_split <-  
+  speciesrich %>% 
+  group_by(size) %>% 
+  group_split() 
+
+
 
 #############################################################################
 ### 3. Beta diversity dataframes --------------------------------------------
@@ -89,6 +113,8 @@ ril_gamma <-
   left_join(ril_vel) %>% 
   st_drop_geometry()
 
+# Long format for the total (i.e. gamma) diversity in an Area X Fascia
+# combination
 gamma_fascia <-
   ril_gamma %>% 
   dplyr::select(-ril) %>% 
@@ -99,8 +125,12 @@ gamma_fascia <-
   mutate(gamma = dplyr::select(., `Acer campestre`:`Xeranthemum inapertum`) %>% rowSums(na.rm = TRUE)) %>% 
   dplyr::select(size,  Fascia, gamma) 
 
+gamma_fascia$size2 <- as.numeric(gamma_fascia$size)
+
+# Splitting the different Areas sampled into different list entries 
 gam_split <-  
   gamma_fascia %>% 
   group_by(size) %>% 
   group_split() 
 
+load_data <- TRUE

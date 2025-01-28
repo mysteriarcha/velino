@@ -2,7 +2,9 @@
 
 # Detach all previously loaded packages
 loaded_pkgs <- paste0("package:", names(sessionInfo()$otherPkgs))
-invisible(lapply(loaded_pkgs, detach, character.only = TRUE, unload = TRUE, force = TRUE))
+if(loaded_pkgs != "package:"){
+  invisible(lapply(loaded_pkgs, base::detach, character.only = TRUE, unload = TRUE, force = TRUE))
+}
 
 # Check what are the installed packagers by the user:
 inst_pkgs <- rownames(installed.packages())
@@ -20,7 +22,7 @@ pkg_list <-
     "gt",         # For tabulation and plotting functions
     
     # Geographic information:
-    # "raster",     # Manipulatio of raster data
+    # "raster",     # Manipulation of raster data
     # "terra",      # Updated raster package
     "sf",         # Geometries
     "tmap",       # Map making
@@ -30,7 +32,11 @@ pkg_list <-
     "betapart",   # For beta-diversity metrics
     "modEvA",     # For model evaluation
     "AICcmodavg", # idem
-    "betareg"     # For beta regression  
+    "betareg",    # For beta regression
+    "MASS",       # For negative binomial glms
+    "DHARMa",     # For spatial autocorrelation
+    "qqplotr"     # For qqplot analysis
+    
   )
 
 # Install packages that are not in the user's system
@@ -55,3 +61,5 @@ invisible(
 rm(list = ls())
 
 print("All packages installed and loaded successfully!")
+
+load_libs <- TRUE

@@ -1,109 +1,246 @@
-library(raster)
-library(tidyverse)
-library(vegan)
-library(gt)
-library(modEvA)
-library(tmap)
-library(sf)
+
+source("03_setup.R")
+# Visualization customs for a geom_violin type of plot
+#source("https://gist.githubusercontent.com/benmarwick/2a1bb0133ff568cbe28d/raw/fb53bd97121f7f9ce947837ef1a4c65a73bffb3f/geom_flat_violin.R")
 
 
-ril_vel <- read.csv("velino_firstcycle.csv", row.names = 1) %>% 
-   t() %>% as.data.frame() %>% 
-  add_column(ril = word(rownames(.), 1, sep = '_'), 
-             size = word(rownames(.), 2, sep = '_') ) 
+# Visualization of species richness along the elevational gradient structured
+# by plot area:
+speciesrich  %>% 
+  mutate(size = as.numeric(size)) %>%
+  arrange(size) %>% 
+  # filter(size != 0.015, size != 0.03125) %>% 
+  mutate(size = as.factor(size)) %>% 
+  ggplot(aes (x = quota, y = alpha, col = size, group = size)) +
+  # geom_point() +
+  geom_smooth(formula =  y ~ poly(x,1), method = "lm", size = 1.5, alpha = 0.20) +
+  # scale_y_discrete(limits = factor(0:80))+
+  theme_bw() +
+  xlab("Elevation") +
+  ylab("Alpha diversity") +
+  scale_color_brewer(palette = "Set1") 
 
-coords <- st_read("coords_rilievi.shp") %>% 
-  st_transform("EPSG:32632")
+# We can clearly see that the grain size (or area) affects the correlation 
+# between alpha-diversity and elevation: fine grain size is not affected by 
+# elevation, but the negative correlaiton between elevation and alpha diversity
+# becomes stronger on increasing grain size. We can explore what is the "scale
+# of effect"  
 
-vel_env <- read.csv ("velino_environment.csv", row.names = 1, sep = ";") %>% 
-  cbind(coords$geometry)
+# We had divided our species richness by grain size, which will come in 
+# handy to run separate analyses. The object in question is sr_split.
+
+# Let's first fit a general model of the relationship we have seen on the 
+# initial plot: alpha diversity explained by an interaction of plot size
+# and altitude:
+m <- glm.nb(alpha ~ quota + I(log(size2, base=2)), data = speciesrich) 
+# library(glmmTMB)
+# mx <- glmmTMB::glmmTMB(alpha ~ offset(log(size2, base=2)) + quota, data = speciesrich, family = nbinom1) 
+# my <- glmmTMB::glmmTMB(alpha ~ offset(log(size2, base=2)), data = speciesrich, family = nbinom1) 
+# 1 - deviance(mx)/deviance(my) 
+
+# Let's first extract some important information from the model: fitted values,
+# residuals, etc:
+norm.res <- broom::augment(m)
+
+# And let's check the R2:
+1 - m$deviance/m$null.deviance
+# 0.85, very good!
+AIC(m)
+
+# First let's try to be sure that there is no problem of spatial autocorrelation
+# and of normality of residuals. 
+# We have to obtain a geometric distance matrix 
+D <- st_distance(coords)
+# And get rid of it's annoying "units" and metadata
+class(D) <- "matrix"
+
+# The following functions come from the DHARMa package
+m %>% 
+  # Obtain simulated standardized residuals
+  simulateResiduals(n = 1e3) %>%
+  # Each observation across a size range comes from the same "location", 
+  # so there are ties in the geographic coordinates. We have to account for these
+  # with the following line:
+  recalculateResiduals(group = rep(1:83, each = 9)) %>%
+  # And now we can test spatial autocorrelation of residuals through Moran's I:
+  testSpatialAutocorrelation(distMat = D)
+
+# Moran's I is extremely small and p-value around 0.5 so nothing to worry about
+
+# Now let's see the residuals structure: add simulated residuals to the
+# database of residuals we already had:
+norm.res$std_res <- 
+  residuals(
+    DHARMa::simulateResiduals(m, n = 1e3, integerResponse = F, refit = F, plot = F),
+    quantileFunction = qnorm
+  )
+
+# Now create a qqplot of standardized vs theoretical residuals:
+ggplot(data = norm.res, mapping = aes(sample = std_res)) + 
+  qqplotr::stat_qq_point()+
+  theme_classic()+
+  qqplotr::stat_qq_line()+
+  qqplotr::stat_qq_band(alpha=0.3)
+
+# And check whether the residuals are flat and have constant variance 
+# against the fitted values
+ggplot(data=norm.res, mapping = aes(x = .fitted, 
+                                    y = std_res)) + 
+  geom_point(col="black", size=2)+
+  geom_hline(yintercept =0,linetype = 2, size=1.2)+
+  theme_classic()+ 
+  labs(x="Fitted",y="Residuals")+
+  theme(axis.title=element_text(size=18), 
+        axis.text = element_text(size=16))
+
+# The assumptions of the linear model are generally well supported. 
+# Nothing to worry about!
+
+# Finally let's explore the variance explained by each of variables in our
+# model: quota and size by themselves, and their interaction. 
+# First we have to create a function that returns the deviance explained
+# from the glm.nb model:
+NB_glm_r2 <- 
+  function(form, df = speciesrich){
+  m <- glm.nb(form, data = df)
+  1 - m$deviance/m$null.deviance
+}
+
+# And feed it to the domir function in the domir package, that requires a 
+# formula and the function that extracts the R2 from it:
+domir::domir(alpha ~ quota + log(size2), NB_glm_r2)
+domir::domir(alpha ~ quota * log(size2), NB_glm_r2)
+
+NB_glm_r2(alpha ~ poly(quota, 1) + log(size2))
+
+m  <- glm.nb(alpha ~ quota + I(log(size2, 2)), data = speciesrich)
+m2 <- glm.nb(alpha ~ poly(quota, 2) + I(log(size2, base = 2L)), data = speciesrich)
+m3 <- glm.nb(alpha ~ poly(quota, 3) + I(log(size2, base = 2L)), data = speciesrich)
+
+m_int  <- glm.nb(alpha ~ quota * I(log(size2, 2)), data = speciesrich)
+m_int2 <- glm.nb(alpha ~ poly(quota, 2) * I(log(size2, base = 2L)), data = speciesrich)
+m_int3 <- glm.nb(alpha ~ poly(quota, 3) * I(log(size2, base = 2L)), data = speciesrich)
 
 
-ril_fascia <- vel_env %>% 
-  rownames_to_column("ril") %>% 
-  select(ril, quota) %>% 
-  left_join(ril_vel) 
+AIC(m, m2, m3, m_int, m_int2, m_int3) %>% .[, 2] %>% phytools::aic.w()
+anova(m, m2, m3, m_int, m_int2, m_int3)
+
+anova(m, m2, m3)
+anova(m, m3)
+
+fit_vals_m3 <- data.frame("quota" = speciesrich$quota, 
+                          "fitted" = fitted(m3),
+                          "alpha" = speciesrich$alpha,
+                          "size" = as.factor(speciesrich$size2))
+fit_vals_m3 %>% 
+  ggplot(aes(x = quota, y = fitted, color = size)) +
+  geom_point(aes(y = alpha), alpha = .5) +
+  geom_line(linewidth = 1.2) +
+  theme_classic() +
+  scale_color_viridis_d()
+
+# From it we can observe that quota by itself AND in interaction with size 
+# explain, all together, roughly the same as the size on its own.
+
+extract_coefs <- 
+  function(mod, var){
+    eff <- coef(mod)[[var]]
+    l_ci <- confint(mod)[var, 1]
+    u_ci <- confint(mod)[var, 2]
+    df <- data.frame(eff, l_ci, u_ci)
+    rownames(df) <- names(coef(mod))[[var]]
+    df
+  }
+
+sapply(1:5, extract_coefs, mod = m3) %>% 
+  t() %>% 
+  set_rownames(., c("Intercept", "linear_quota", "quad_quota", "cube_quota", "log_size")) %>%
+  as.data.frame() %>% 
+  rownames_to_column(var = "predictor")
+
+sizes <- unique(speciesrich$size2)
+lapply(sizes,
+       function(x){
+         df <- speciesrich[speciesrich$size2 == x, ]
+         m <- glm.nb(alpha ~ poly(quota, 3), data = df)
+         coef(m)[-1]
+       }) %>% 
+  Reduce(rbind, .) %>% 
+  data.frame("size" = sizes, .) %>% 
+  ggplot(aes(x = size, y = poly.quota..3.3)) +
+  geom_point() +
+  geom_hline(yintercept = 0, linetype = 2) +
+  theme_classic()
+
+lapply(
+  1:9,
+  function(x){
+    MASS::glm.nb(
+      alpha ~ quota,
+      sr_split[[x]]
+      ) %>% 
+    DHARMa::simulateResiduals(n = 1e3) %>% 
+    DHARMa::testSpatialAutocorrelation(distMat = D)}
+)
+
+
+
+d2_AIC_alpha <-   
+  map(
+    sr_split, 
+    function(x){
+    # x <- sr_split[[9]]
+    # deh <- list()
+    
+      # Let's define a battery of models with increasing complexity:
+      # Either linear, quadratic or cubic
+      glm_1alpha <- glm (formula = alpha ~ poly(quota, 1), data = x, family = poisson)
+      glm_2alpha <- glm (formula = alpha ~ poly(quota, 2), data = x, family = poisson)
+      glm_3alpha <- glm (formula = alpha ~ poly(quota, 3), data = x, family = poisson)
+      
+      # Select the model by AIC differences
+      if(summary(glm_1alpha)$aic - 2 <= summary(glm_2alpha)$aic){
+        glm_alpha = glm_1alpha
+      } else if(summary(glm_2alpha)$aic - 2 <= summary(glm_3alpha)$aic){
+          glm_alpha = glm_2alpha
+      }else{glm_alpha = glm_3alpha}
+      
+      # Obtain summary statistics from the fitted model
+      sum_glm <- summary(glm_alpha)
+      coef_model <- sum_glm$coefficients 
+      names_coef <- 
+        c("Int", "p_interc", "Elev1", "p1", "Elev2", "p2", "Elev3", "p3") %>%
+        .[1:(nrow(coef_model)*2)]
+      
+      coef_model <- 
+        coef_model %>%
+        t() %>%
+        as.data.frame() %>%  
+        rowwise() %>% 
+        map(., function(y) y[c(1,4)]) %>% 
+        do.call(c,.) %>% 
+        setNames(., names_coef)
+      
+      # deh <- list()
+      
+      # Obtain an evaluation from the model based on the deviance squared
+      # and a summary of model coefficients
+      deh <- 
+        c(D2 = modEvA::Dsquared(glm_alpha), AIC = sum_glm$aic, coef_model) %>%
+        t() %>%
+        as.data.frame() %>%
+        cbind(size = x$size %>% unique())
+      
+      return(deh) 
+    
+    }
+  )
   
-
-  speciesrich <- ril_fascia %>% 
-    select(-ril) %>%
-    filter(size != 0.015, size != 0.03125) %>% 
-    mutate(alpha = select(., `Acer campestre`:`Xeranthemum inapertum`) %>% rowSums(na.rm = TRUE)) %>% 
-    select(size, quota, alpha)
-    
- 
- #source("https://gist.githubusercontent.com/benmarwick/2a1bb0133ff568cbe28d/raw/fb53bd97121f7f9ce947837ef1a4c65a73bffb3f/geom_flat_violin.R")
-
-  speciesrich  %>% 
-    mutate(size = as.numeric(size)) %>%
-    arrange(size) %>% 
-    filter(size != 0.015, size != 0.03125) %>% 
-    mutate(size = as.factor(size)) %>% 
-    ggplot(aes (x = quota, y = alpha, col = size, group = size)) +
-  #  geom_point() +
-    geom_smooth(formula =  y ~ poly(x,1), method = "lm", size = 1.5, alpha = 0.20) +
- #   scale_y_discrete(limits = factor(0:80))+
-    theme_bw()+
-    xlab("Elevation") +
-    ylab("Alpha diversity") +
-    scale_color_brewer(palette = "Set1") 
-  
-  
-
- ##split SR x grain size
-  
-   sr_split <-  speciesrich %>% 
-    group_by(size) %>% 
-    group_split() 
-   
-    
-  ########D2 e AIC
-     
-
-  d2_AIC_alpha <-   map(sr_split, function(x){
-  
-    #x <- sr_split[[9]]
-    #deh <- list()
-    
-    glm_1alpha <- glm (formula = alpha ~ poly(quota, 1), data = x, family = poisson)
-    glm_2alpha <- glm (formula = alpha ~ poly(quota, 2), data = x, family = poisson)
-    glm_3alpha <- glm (formula = alpha ~ poly(quota, 3), data = x, family = poisson)
-    
-    
-    if(summary(glm_1alpha)$aic - 2 <= summary(glm_2alpha)$aic){
-      glm_alpha = glm_1alpha
-    } else if(summary(glm_2alpha)$aic - 2 <= summary(glm_3alpha)$aic){
-        glm_alpha = glm_2alpha
-    }else{glm_alpha = glm_3alpha}
-    
-    sum_glm <- summary(glm_alpha)
-    
-    coef_model <- sum_glm$coefficients 
-    
-    names_coef <- c("Int", "p_interc", "Elev1", "p1", "Elev2", "p2", "Elev3", "p3") %>%
-      .[1:(nrow(coef_model)*2)]
-    
-    coef_model <- coef_model %>%
-      t() %>% as.data.frame() %>%  
-      rowwise() %>% 
-      map(., function(y) y[c(1,4)]) %>% 
-      do.call(c,.) %>% 
-      setNames(., names_coef)
-    
- # deh <- list()
-    
-    deh <- c(D2 = modEvA::Dsquared(glm_alpha), AIC = sum_glm$aic, coef_model) %>%
-      t() %>%
-      as.data.frame() %>%
-      cbind(size = x$size %>% unique())
-    
-    return(deh) 
-  
-  })
-  
-table <-  d2_AIC_alpha %>% do.call(bind_rows, .) %>% 
-    arrange (factor(size, levels = c ('0.0625', '0.125', '0.25', 
-                                    '0.5', '1', '2', '4', '8', '16')))  
+table <-  
+  d2_AIC_alpha %>% 
+  do.call(bind_rows, .) %>% 
+  mutate(size = grain_sizes2) %>% 
+  arrange(size)
 
 #coef_alpha <- read.csv("coef_alpha.csv")
 
