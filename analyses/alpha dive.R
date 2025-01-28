@@ -130,6 +130,7 @@ m_int3 <- glm.nb(alpha ~ poly(quota, 3) * I(log(size2, base = 2L)), data = speci
 
 # Assess their relative evidence with AIC
 AIC(m, m2, m3, m_int, m_int2, m_int3) %>% .[, 2] %>% phytools::aic.w()
+
 # Apparently only those of 3rd degree have substantial support. Let's test
 # if the interaction is statistically significant:
 anova(m3, m_int3)
@@ -202,8 +203,13 @@ ggplot(r2_df,
   labs(fill = "Predictor variable") +
   scale_fill_viridis_d()
 
+# It is obvious that the accumulated interactions explain most of the variance.
+# PENDING: CHECK THE .fct ARGUMENT IN domin()
+
 # Now we know how the species diversity reacts as a whole, explainable as:
 summary(m_int3)
+saveRDS(summary(m_int3), "./results/RDS/summary_m_int3.RDS")
+saveRDS(summary(m3), "./results/RDS/summary_m3.RDS")
 
 # The interaction terms are statistically insignificant, but they point anyway
 # to a negative relationship between plot size and the effect of the linear term,
@@ -213,7 +219,6 @@ summary(m_int3)
 
 
 # 2. Plot size-divided models ---------------------------------------------
-
 
 # First let's define a function to extract the coefficients
 extract_coefs <- 
@@ -248,6 +253,7 @@ summary_lists <-
            summary(m)
            }
   )
+saveRDS(summary_lists, "./results/RDS/summary_lists.RDS")
 
 # Extract the effect sizes with our function:
 df_effect_sizes <-
@@ -291,6 +297,17 @@ df_effect_sizes %>%
 # more negative effect of quota on the linear term across plot sizes, and 
 # more positive effects of all the other terms. However, these are, as the
 # summary told us, pretty weak.
+
+# Hence, it is safe to assume that the m3 model, with no interaction between
+# plot size and quota is a good, parsimonious, representation of our data:
+# The effects of quota are quite consistent across plot sizes, with very 
+# weak trends across their different linear, quadratic and cubic components.
+
+# The striking pattern seen in our first exploratory visualization, that 
+# there is a downward trend across elevation that is much stronger for
+# large plot sizes, is very likely due to the fact that the negative binomial
+# is a parametric distribution: the higher the mean, the higher the variance,
+# so the 
 
 d2_AIC_alpha <-   
   map(
