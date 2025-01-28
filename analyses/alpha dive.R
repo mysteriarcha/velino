@@ -129,7 +129,48 @@ AIC(m, m2, m3, m_int, m_int2, m_int3) %>% .[, 2] %>% phytools::aic.w()
 # Apparently only those of 3rd degree have substantial support. Let's test
 # if the interaction is statistically significant:
 anova(m3, m_int3)
-# No, so we don't need the interaction term between quota and plot size
+# No, so for prediction purposes we don't need the interaction term 
+# between quota and plot size. However, we saw by the domir function
+# That there is a large share of variation explained by the interaction
+# of the two variables. Hence, let's make a plot of the variance explained
+# by each variable independently and of shared variance.
+
+speciesrich$polyquota1 <- poly(speciesrich$quota, 1)
+speciesrich$polyquota2 <- poly(speciesrich$quota, 2)[,2]
+speciesrich$polyquota3 <- poly(speciesrich$quota, 3)[,3]
+
+r2 <- domir::domir(alpha ~ 
+                     I(quota**1) * log(size2) +
+                     I(quota**2) * log(size2) +
+                     I(quota**3) * log(size2), 
+                   NB_glm_r2)
+r2_df <-
+  round(r2$General_Dominance, 2) %>% 
+  cbind(., c("Linear", "Log-size", "Quadratic", "Cubic", "interaction1", "interaction2", "interaction3")) %>%
+  as.data.frame()
+colnames(r2_df) <- c("var_explained", "predictor")
+r2_df$var_explained <- as.numeric(r2_df$var_explained)
+r2_df <- rbind(r2_df[1:4, ], 
+               data.frame(
+                 var_explained = sum(r2_df$var_explained[5:7]), 
+                 predictor =  "Interaction")
+)
+r2_df$predictor <- factor(r2_df$predictor, c("Interaction", "Log-size", "Linear", "Quadratic", "Cubic"))
+
+ggplot(r2_df,
+       aes(x = 1, y = var_explained,
+           fill = predictor)) +
+  geom_col(position = "dodge") +
+  labs(x = "Predictor", y = "Variance explained") +
+  theme_classic() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.title.x = element_blank(),
+    axis.title.y = element_text(size = 20, face = "bold"),
+    axis.text.y = element_text(size = 18)
+  ) +
+  labs(fill = "Predictor variable") +
+  scale_fill_viridis_d()
 
 # Let's make a visualization of the model fit:
 fit_vals_m3 <- data.frame("quota" = speciesrich$quota, 
@@ -167,6 +208,15 @@ sapply(1:6, extract_coefs, mod = m_int3) %>%
 
 
 sizes <- unique(speciesrich$size2)
+summary_lists <- 
+  lapply(sizes,
+         function(x){
+           df <- speciesrich[speciesrich$size2 == x, ]
+           m <- glm.nb(alpha ~ poly(quota, 3), data = df)
+           summary(m)
+           }
+  )
+
 df_effect_sizes <-
   lapply(sizes,
        function(x){
@@ -188,7 +238,7 @@ df_effect_sizes %>%
   ggplot(aes(x = log(size,2L), y = eff,
              alpha = ifelse(sign(l_ci) == sign(u_ci), T, F))) +
   geom_pointrange(aes(ymin = l_ci, ymax = u_ci), linewidth = 1) +
-  geom_line() +
+  geom_line(group = 1) +
   geom_hline(yintercept = 0, linetype = 2) +
   theme_classic() +
   labs(x = "Plot size (log2 scale)", y = "Effect size", alpha = "Significant",
@@ -201,7 +251,7 @@ df_effect_sizes %>%
     strip.text = element_text(size = 18, face = "bold"),
     strip.background = element_rect(fill = "oldlace")
   ) +
-  facet_wrap(~var)
+  facet_wrap(~var, scales = "free_y")
 
 
 d2_AIC_alpha <-   
