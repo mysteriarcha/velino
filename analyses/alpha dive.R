@@ -111,7 +111,10 @@ NB_glm_r2 <-
 domir::domir(alpha ~ quota + log(size2), NB_glm_r2)
 domir::domir(alpha ~ quota * log(size2), NB_glm_r2)
 
-NB_glm_r2(alpha ~ poly(quota, 1) + log(size2))
+# The R2 basically doesnt change between the two models. However, when we 
+# add the interaction, we see that its term captures a large part of the variance
+# initially explained by size alone. Let's compare models varying both the
+# interaction and the polynomial degree of the altitude:
 
 m  <- glm.nb(alpha ~ quota + I(log(size2, 2)), data = speciesrich)
 m2 <- glm.nb(alpha ~ poly(quota, 2) + I(log(size2, base = 2L)), data = speciesrich)
@@ -121,13 +124,14 @@ m_int  <- glm.nb(alpha ~ quota * I(log(size2, 2)), data = speciesrich)
 m_int2 <- glm.nb(alpha ~ poly(quota, 2) * I(log(size2, base = 2L)), data = speciesrich)
 m_int3 <- glm.nb(alpha ~ poly(quota, 3) * I(log(size2, base = 2L)), data = speciesrich)
 
-
+# Assess their relative evidence with AIC
 AIC(m, m2, m3, m_int, m_int2, m_int3) %>% .[, 2] %>% phytools::aic.w()
-anova(m, m2, m3, m_int, m_int2, m_int3)
+# Apparently only those of 3rd degree have substantial support. Let's test
+# if the interaction is statistically significant:
+anova(m3, m_int3)
+# No, so we don't need the interaction term between quota and plot size
 
-anova(m, m2, m3)
-anova(m, m3)
-
+# Let's make a visualization of the model fit:
 fit_vals_m3 <- data.frame("quota" = speciesrich$quota, 
                           "fitted" = fitted(m3),
                           "alpha" = speciesrich$alpha,
@@ -138,9 +142,6 @@ fit_vals_m3 %>%
   geom_line(linewidth = 1.2) +
   theme_classic() +
   scale_color_viridis_d()
-
-# From it we can observe that quota by itself AND in interaction with size 
-# explain, all together, roughly the same as the size on its own.
 
 extract_coefs <- 
   function(mod, var){
@@ -158,31 +159,49 @@ sapply(1:5, extract_coefs, mod = m3) %>%
   as.data.frame() %>% 
   rownames_to_column(var = "predictor")
 
+sapply(1:6, extract_coefs, mod = m_int3) %>% 
+  t() %>% 
+  set_rownames(., c("Intercept", "linear_quota", "quad_quota", "cube_quota", "log_size", "interaction_quota.size")) %>%
+  as.data.frame() %>% 
+  rownames_to_column(var = "predictor")
+
+
 sizes <- unique(speciesrich$size2)
-lapply(sizes,
+df_effect_sizes <-
+  lapply(sizes,
        function(x){
          df <- speciesrich[speciesrich$size2 == x, ]
          m <- glm.nb(alpha ~ poly(quota, 3), data = df)
-         coef(m)[-1]
+         res <- t(sapply(1:4, extract_coefs, mod = m))
+         res <- apply(res, 2, unlist)
+         res <- as.data.frame(res)
+         res$var  <- factor(c("Intercept", "Linear", "Quadratic", "Cubic"), 
+                            levels = c("Intercept", "Linear", "Quadratic", "Cubic")
+                            )
+         res$size <- x
+         return(res)
        }) %>% 
-  Reduce(rbind, .) %>% 
-  data.frame("size" = sizes, .) %>% 
-  ggplot(aes(x = size, y = poly.quota..3.3)) +
-  geom_point() +
+  Reduce(rbind, .)
+
+df_effect_sizes %>% 
+  as_tibble() %>% 
+  ggplot(aes(x = log(size,2L), y = eff,
+             alpha = ifelse(sign(l_ci) == sign(u_ci), T, F))) +
+  geom_pointrange(aes(ymin = l_ci, ymax = u_ci), linewidth = 1) +
+  geom_line() +
   geom_hline(yintercept = 0, linetype = 2) +
-  theme_classic()
-
-lapply(
-  1:9,
-  function(x){
-    MASS::glm.nb(
-      alpha ~ quota,
-      sr_split[[x]]
-      ) %>% 
-    DHARMa::simulateResiduals(n = 1e3) %>% 
-    DHARMa::testSpatialAutocorrelation(distMat = D)}
-)
-
+  theme_classic() +
+  labs(x = "Plot size (log2 scale)", y = "Effect size", alpha = "Significant",
+       title = "Effects of altitude on\nalpha diversity across plot sizes") +
+  scale_color_viridis_d() +
+  theme(
+    axis.title = element_text(size = 20, face = "bold"),
+    axis.text = element_text(size = 18),
+    plot.title = element_text(size = 20, face = "bold", hjust = .5),
+    strip.text = element_text(size = 18, face = "bold"),
+    strip.background = element_rect(fill = "oldlace")
+  ) +
+  facet_wrap(~var)
 
 
 d2_AIC_alpha <-   
@@ -329,7 +348,7 @@ table <-
     
      mypalette <- c("#E0DA34", "#99B81E", "#37D46B", "#3AE0C7", "#1F65B5", "#8034D1", "#E00DB6", 
                     "#E6094F", "#DB881B")
-sr_plot <-   sr %>% 
+sr_plot <-   speciesrich %>% 
        mutate(size = as.numeric(size)) %>%
        arrange(size) %>% 
        filter(size != 0.015, size != 0.03125) %>%

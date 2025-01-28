@@ -62,7 +62,7 @@ equatiomatic::extract_eq(lm(forms$log_decay, data = m_df_SA_alpha), use_coefs = 
 # Let's take it as the valid one, and plot it with:
 m_df_SA_alpha %>% 
   ggplot(aes(x = fascia, y = size, group = 1)) +
-  geom_point() +
+  geom_pointrange(aes(ymin = lwr_ci, ymax = upr_ci)) +
   geom_line() +
   geom_smooth(method = "lm", formula = "y ~ log(x)") +
   theme_classic()
